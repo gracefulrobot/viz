@@ -1,0 +1,197 @@
+(function() {
+    vis={};
+    var width,height;
+    var chart,svg;
+    var defs,style;
+    var slider,step,maxStep,running;
+    var button;
+    var margin,radius,xScale,yScale;
+    var radians, arcWidth, direction, transform;
+ 
+    vis.init=function(params) {
+        if (!params) {params = {}} // if params does not exist, create an empty object
+        chart = d3.select(params.chart||"#chart"); // placeholder div for svg
+        width = params.width || 960;
+        height = params.height || 200;
+        margin = params.margin || width *0.1;
+        chart.selectAll("svg")
+            .data([{width:width,height:height}])
+            .enter()
+            .append("svg");
+        svg = d3.select("svg")
+                .attr({
+                    width:function(d) {return d.width},
+                    height:function(d) {return d.height},
+        }); 
+
+        // vis.init can be re-run to pass different height/width values 
+        // to the svg. this doesn't create new svg elements. 
+ 
+        style = svg.selectAll("style")
+                    .data([{}]).enter() 
+                    .append("style")
+                    .attr("type","text/css"); 
+        // this is where we can insert style that will affect the svg directly.
+ 
+        defs = svg.selectAll("defs")
+                    .data([{}]).enter()
+                    .append("defs"); 
+        // this is used if it's necessary to define gradients, patterns etc.
+ 
+        // the following will implement interaction around a slider and a 
+        // button. repeat/remove as needed. 
+        // note that this code won't cause errors if the corresponding elements 
+        // do not exist in the HTML.  
+         
+        slider = d3.select(params.slider || ".slider");
+         
+        if (slider[0][0]) {
+            maxStep = slider.property("max");
+            step = slider.property("value");
+            slider.on("change", function() {
+                vis.stop(); 
+                step = this.value; 
+                vis.draw(params);})
+            running = params.running || 0; // autorunning off or manually set on
+        } else {
+            running = -1; // never attempt auto-running
+        }
+        button = d3.select(params.button || ".button");
+        if(button[0][0] && running> -1) {
+            button.on("click", function() {
+                if (running) {
+                    vis.stop();
+                } else {
+                    vis.start();
+                }
+            })
+        };
+        vis.loaddata(params);
+    } //end vis.init function
+         
+    vis.loaddata = function(params) {
+        if(!params) {params = {}}
+        //d3.text(params.style||"style.txt", function (error,txt) {
+            // note that execution won't be stopped if a style file isn't found
+          //  style.text(txt); // but if found, it can be embedded in the svg. 
+            d3.json(params.data || "CJdata.json"+ (params.refresh ? ("#" + Math.random()) : ""), function(error,json) {
+                vis.data = json;
+                nodeCount = vis.data.nodes.length,
+                linkCount = vis.data.links.length;
+                if(running > 0) {vis.start();} else {vis.draw(params);}
+            }) 
+        //}) //end style 
+    }
+     
+    vis.play = function() {
+        if(i === maxStep && !running){
+            step = -1; 
+            vis.stop();
+        }
+        if(i < maxStep) {
+            step = step + 1; 
+            running = 1;
+            d3.select(".stop").html("Pause").on("click", vis.stop(params));
+            slider.property("value",i);
+        vis.draw(params);} else {vis.stop();}    
+    }
+ 
+    vis.start = function(params) {
+        timer = setInterval(function() {vis.play(params)}, 50);
+    }
+ 
+    vis.stop = function (params) {
+        clearInterval(timer);
+        running = 0;
+        d3.select(".stop").html("Play").on("click", vis.start(params));
+    }
+ 
+    vis.draw = function(params) {
+
+        xScale = d3.scale.linear()
+            .domain([0, nodeCount])
+            .range([margin, width-margin]);
+        
+        yScale = d3.scale.linear()
+            .domain([0, 100])
+            .range([height - height*0.1, height*0.1]);
+        
+        radius = Math.floor(width/(4*nodeCount));
+
+        var colour = ['#72d3ee','#69cceb','#4ca9df','#295898','#9b347c',
+                        '#b84593','#d03d6e','#e95b86','#eb6d35','#f1ab3c',
+                        '#f5d03f','#f7d396','#8cc457','#50a851','#414141',
+                        '#595959','#9696a0','#d9d9e1'];
+        
+        // add links
+        radians = d3.scale.linear()
+            .range([Math.PI / 2, 3 * Math.PI / 2]);
+        
+        direction = function (d,i) { return 1 ; };
+
+        var arc = d3.svg.line.radial()
+            .interpolate("basis")
+            .tension(0)
+            .angle(function(d) { return radians(d); });
+
+        transform = function (d,i) { 
+                        // get x distance between source and target
+                        arcDist = Math.abs(xScale(d.source) - xScale(d.target));
+                        // move centre point between source and target
+                        var xShift =  Math.min(xScale(d.source),xScale(d.target)) + (arcDist/2);
+                        return "translate(" + xShift + "," + height / 2 + ")";
+                    };
+        makeArc = function (d,i) {
+                    arcWidth = (xScale(d.source) - xScale(d.target));                      
+                    arc.radius(arcWidth / 2); // set arc radius based on x distance
+                    var points = d3.range(0, Math.ceil(arcDist / 3)); // generate 1/3 as many points per pixel in x direction   
+                    radians.domain([0, points.length - 1]); // set radian scale domain
+                    return arc(points); // return path for arc
+                };
+
+        var addLinks = svg.selectAll(".link")
+            .data(vis.data.links);
+
+        addLinks.enter()
+                .append("path")
+                .attr("class", "link")
+                .attr("id", function (d,i) {return "source"+d.source+':'+"target"+d.target})
+                .attr("stroke", "#000000")
+                .attr("fill","none")
+                .style("stroke-width", function(d) { return Math.sqrt(d.value); })
+                .attr("transform", transform)
+                .attr("d", makeArc);
+
+        addLinks.transition()
+            .attr("transform", transform)
+            .attr("d", makeArc);
+
+        //add nodes
+        var node = svg.selectAll(".node")
+            .data(vis.data.nodes);
+
+        node.enter()
+            .append("circle")
+            .attr("class", "node")
+            .attr("cx", function(d,i) { return xScale(i); })
+            .attr("cy", height/2)
+            .attr("r", radius)
+            .style("fill", function(d, i) { return colour[i]; });
+
+        node.transition()
+            .attr("cx", function(d,i) { return xScale(i); })
+            .attr("cy", height/2)
+            .attr("r", radius);
+
+    } // end of vis draw
+
+    function resize() { // Update graph using new width and height
+        params.width = parseInt(d3.select("#chart").style("width")),
+        params.height = window.innerHeight;
+        vis.init(params);
+
+    } // end of resize
+ 
+    d3.select(window).on('resize', resize); 
+
+})();
